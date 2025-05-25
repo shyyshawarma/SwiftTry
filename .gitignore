@@ -8,7 +8,6 @@ output_result/
 logs/
 .venv/
 mlruns/
-data/
 *.jpg
 *.png
 *.pth
