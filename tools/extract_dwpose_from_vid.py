@@ -2,9 +2,7 @@ import concurrent.futures
 import os
 import random
 from pathlib import Path
-import sys
 from PIL import Image
-sys.path.append('/root/Projects/Moore-AnimateAnyone')
 import numpy as np
 from tqdm import tqdm
 

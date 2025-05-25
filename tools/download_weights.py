@@ -6,7 +6,7 @@ from huggingface_hub import hf_hub_download
 
 def prepare_base_model():
     print(f'Preparing base stable-diffusion-v1-5 weights...')
-    local_dir = "./pretrained_weights/stable-diffusion-v1-5"
+    local_dir = "./pretrained_sd_models/stable-diffusion-v1-5"
     os.makedirs(local_dir, exist_ok=True)
     for hub_file in ["unet/config.json", "unet/diffusion_pytorch_model.bin"]:
         path = Path(hub_file)
@@ -23,7 +23,7 @@ def prepare_base_model():
 
 def prepare_image_encoder():
     print(f"Preparing image encoder weights...")
-    local_dir = "./pretrained_weights"
+    local_dir = "./pretrained_sd_models"
     os.makedirs(local_dir, exist_ok=True)
     for hub_file in ["image_encoder/config.json", "image_encoder/pytorch_model.bin"]:
         path = Path(hub_file)
@@ -40,7 +40,7 @@ def prepare_image_encoder():
 
 def prepare_dwpose():
     print(f"Preparing DWPose weights...")
-    local_dir = "./pretrained_weights/DWPose"
+    local_dir = "./pretrained_sd_models/DWPose"
     os.makedirs(local_dir, exist_ok=True)
     for hub_file in [
         "dw-ll_ucoco_384.onnx",
@@ -61,7 +61,7 @@ def prepare_dwpose():
 
 def prepare_vae():
     print(f"Preparing vae weights...")
-    local_dir = "./pretrained_weights/sd-vae-ft-mse"
+    local_dir = "./pretrained_sd_models/sd-vae-ft-mse"
     os.makedirs(local_dir, exist_ok=True)
     for hub_file in [
         "config.json",
@@ -79,10 +79,9 @@ def prepare_vae():
             local_dir=local_dir,
         )
 
-
-def prepare_anyone():
-    print(f"Preparing AnimateAnyone weights...")
-    local_dir = "./pretrained_weights"
+def prepare_swifttry():
+    print(f"Preparing SwiftTry weights...")
+    local_dir = "./pretrained_sd_models/swift_try"
     os.makedirs(local_dir, exist_ok=True)
     for hub_file in [
         "denoising_unet.pth",
@@ -96,7 +95,7 @@ def prepare_anyone():
             continue
 
         hf_hub_download(
-            repo_id="patrolli/AnimateAnyone",
+            repo_id="NMHung/SwiftTry",
             subfolder=PurePosixPath(path.parent),
             filename=PurePosixPath(path.name),
             local_dir=local_dir,
@@ -107,5 +106,5 @@ if __name__ == '__main__':
     prepare_image_encoder()
     prepare_dwpose()
     prepare_vae()
-    prepare_anyone()
+    prepare_swifttry()
     

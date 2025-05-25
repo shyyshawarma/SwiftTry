@@ -1,5 +1,3 @@
-import sys
-sys.path.append('/root/Projects/Moore-AnimateAnyone')
 from src.dwpose import DWposeDetector
 import os
 
