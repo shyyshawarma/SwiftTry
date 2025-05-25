@@ -27,7 +27,7 @@ from diffusers import AutoencoderKL, DDIMScheduler
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version
 from diffusers.utils.import_utils import is_xformers_available
-from src.loss import VGG19_feature_color_torchversion
+
 from omegaconf import OmegaConf
 from PIL import Image
 from torchvision import transforms
@@ -35,10 +35,10 @@ from tqdm.auto import tqdm
 from transformers import CLIPVisionModelWithProjection
 from einops import rearrange
 from src.data.dataset import VITONHDDataset
-from src.models.mutual_self_attention import ReferenceAttentionControl
-from src.models.pose_guider import PoseGuider
-from src.models.unet_2d_condition import UNet2DConditionModel
-from src.models.unet_3d import UNet3DConditionModel
+from src.models_attention.mutual_self_attention import ReferenceAttentionControl
+from src.models_attention.pose_guider import PoseGuider
+from src.models_attention.unet_2d_condition import UNet2DConditionModel
+from src.models_attention.unet_3d import UNet3DConditionModel
 from src.pipelines.pipeline_tryon import TryOnPipeline
 from src.utils.util import delete_additional_ckpt, import_filename, seed_everything
 
@@ -53,29 +53,6 @@ def freeze_unet_blocks(unet):
     # Freeze encoder blocks
     for param in unet.down_blocks.parameters():
         param.requires_grad = False
-
-class MyDDIMScheduler(DDIMScheduler):
-
-    def remove_noise(
-        self,
-        noisy_samples: Union[torch.FloatTensor, np.ndarray],
-        noise: Union[torch.FloatTensor, np.ndarray],
-        timesteps: Union[torch.IntTensor, np.ndarray],
-    ) -> Union[torch.FloatTensor, np.ndarray]:
-        # Make sure alphas_cumprod and timestep have same device and dtype as noisy_samples
-        alphas_cumprod = self.alphas_cumprod.to(device=noisy_samples.device, dtype=noisy_samples.dtype)
-        timesteps = timesteps.to(noisy_samples.device)
-        sqrt_alpha_prod = alphas_cumprod[timesteps] ** 0.5
-        sqrt_alpha_prod = sqrt_alpha_prod.flatten()
-        while len(sqrt_alpha_prod.shape) < len(noisy_samples.shape):
-            sqrt_alpha_prod = sqrt_alpha_prod.unsqueeze(-1)
-        sqrt_one_minus_alpha_prod = (1 - alphas_cumprod[timesteps]) ** 0.5
-        sqrt_one_minus_alpha_prod = sqrt_one_minus_alpha_prod.flatten()
-        while len(sqrt_one_minus_alpha_prod.shape) < len(noisy_samples.shape):
-            sqrt_one_minus_alpha_prod = sqrt_one_minus_alpha_prod.unsqueeze(-1)
-
-        original_samples = (sqrt_alpha_prod * noisy_samples - sqrt_one_minus_alpha_prod * noise) 
-        return original_samples
 
 class Net(nn.Module):
     def __init__(
@@ -259,14 +236,6 @@ def log_validation(
     return pil_images
 
 
-def get_vgg_loss(vgg, pred, gt):
-    pred_feat = vgg(pred, ["r12", "r22", "r32", "r42", "r52"], preprocess=True)
-    gt_feat = vgg(gt, ["r12", "r22", "r32", "r42", "r52"], preprocess=True)
-    loss_feat = 0
-    weights = [1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0]
-    for i in range(len(pred_feat)):
-        loss_feat += weights[i] * F.l1_loss(pred_feat[i], gt_feat[i].detach())
-    return loss_feat
 
 
 
@@ -342,9 +311,9 @@ def main(cfg):
             timestep_spacing="trailing",
             prediction_type="v_prediction",
         )
-    val_noise_scheduler = MyDDIMScheduler(**sched_kwargs)
+    val_noise_scheduler = DDIMScheduler(**sched_kwargs)
     sched_kwargs.update({"beta_schedule": "scaled_linear"})
-    train_noise_scheduler = MyDDIMScheduler(**sched_kwargs)
+    train_noise_scheduler = DDIMScheduler(**sched_kwargs)
     vae = AutoencoderKL.from_pretrained(cfg.vae_model_path).to(
         "cuda", dtype=weight_dtype
     )
@@ -415,12 +384,7 @@ def main(cfg):
         batch_size=cfg.data.train_bs,
         fusion_blocks="full",
     )
-    # define VGG loss
-    if cfg.use_vgg_perceptual_loss:
-        print("VGG network initialization...")
-        vgg = VGG19_feature_color_torchversion(vgg_normal_correct=False)
-        vgg.load_state_dict(torch.load("pretrained_weights/vgg/vgg19_conv.pth", map_location="cpu"))
-        vgg.eval()
+
 
 
 
@@ -516,8 +480,6 @@ def main(cfg):
         train_dataloader,
         lr_scheduler,
     )
-    if cfg.use_vgg_perceptual_loss:
-        vgg = accelerator.prepare(vgg)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
@@ -582,7 +544,7 @@ def main(cfg):
     progress_bar.set_description("Steps")
 
     for epoch in range(first_epoch, num_train_epochs):
-        train_loss, train_diff_loss, train_vgg_loss = 0.0, 0.0, 0.0
+        train_loss = 0.0
         net.train()
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(net):
@@ -690,30 +652,12 @@ def main(cfg):
                     pose_images,
                     uncond_fwd,
                 )
-                if cfg.use_vgg_perceptual_loss:
-                    z0_pred = train_noise_scheduler.remove_noise(
-                        temp_noisy_latents, model_pred, timesteps
-                    ).to(weight_dtype)
-                    images_pred = decode_latents(vae, z0_pred)
-                    images_gt = decode_latents(vae, latents)
-                    
-                    # images_pred_pil = transforms.ToPILImage()(images_pred[0])
-                    # images_gt_pil = transforms.ToPILImage()(images_gt[0])
-                    # canvas = Image.new('RGB', (cfg.data.train_width*2, cfg.data.train_height), "white")
-                    # canvas.paste(images_pred_pil, (0, 0))
-                    # canvas.paste(images_gt_pil, (cfg.data.train_width, 0))
-                    # canvas.save(f'debug/{global_step}.png')
-                    loss_vgg = get_vgg_loss(vgg, images_pred, images_gt)
-                    loss_vgg_weight = cfg.vgg_weight_loss
-                loss_l1_weight = 1.
+
                 if cfg.snr_gamma == 0:
                     loss_diff = F.mse_loss(
                         model_pred.float(), target.float(), reduction="none"
                     )
-                    if cfg.use_vgg_perceptual_loss:
-                        loss = loss_diff * loss_l1_weight + loss_vgg * loss_vgg_weight
-                    else:
-                        loss = loss_diff
+                    loss = loss_diff
                     loss = loss.mean()
                 else:
                     snr = compute_snr(train_noise_scheduler, timesteps)
@@ -733,19 +677,8 @@ def main(cfg):
                         loss_diff.mean(dim=list(range(1, len(loss_diff.shape))))
                         * mse_loss_weights
                     )
-                    if cfg.use_vgg_perceptual_loss:
-                        loss = loss_diff * loss_l1_weight + loss_vgg * loss_vgg_weight
-                    else:
-                        loss = loss_diff
+                    loss = loss_diff
                     loss = loss.mean()
-                if cfg.use_vgg_perceptual_loss:
-                    # Gather the losses across all processes for logging (if we use distributed training).
-                    avg_diff_loss = accelerator.gather(loss_diff.mean().repeat(cfg.data.train_bs)).mean()
-                    train_diff_loss += avg_diff_loss.item() / cfg.solver.gradient_accumulation_steps
-                    
-                    # Gather the losses across all processes for logging (if we use distributed training).
-                    avg_vgg_loss = accelerator.gather(loss_vgg.mean().repeat(cfg.data.train_bs)).mean()
-                    train_vgg_loss += avg_vgg_loss.item() / cfg.solver.gradient_accumulation_steps
 
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(cfg.data.train_bs)).mean()
@@ -767,11 +700,8 @@ def main(cfg):
                 reference_control_writer.clear()
                 progress_bar.update(1)
                 global_step += 1
-                if cfg.use_vgg_perceptual_loss:
-                    accelerator.log({"train_loss": train_loss, "diffusion_loss": train_diff_loss, "perceptual_loss": train_vgg_loss}, step=global_step)
-                else:
-                    accelerator.log({"train_loss": train_loss}, step=global_step)
-                train_loss, train_diff_loss, train_vgg_loss = 0.0, 0.0, 0.0
+                accelerator.log({"train_loss": train_loss}, step=global_step)
+                train_loss = 0.0
                 if global_step % cfg.checkpointing_steps == 0 or global_step == 1000:
                     if accelerator.is_main_process:
                         save_path = os.path.join(save_dir, f"checkpoint-{global_step}")

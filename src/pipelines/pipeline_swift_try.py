@@ -4,22 +4,26 @@ from typing import Callable, List, Optional, Union
 import PIL
 import numpy as np
 import torch
+import math
 from diffusers import DiffusionPipeline
 from diffusers.image_processor import VaeImageProcessor
-from diffusers.schedulers import (
-    DDIMScheduler,
-    DPMSolverMultistepScheduler,
-    EulerAncestralDiscreteScheduler,
-    EulerDiscreteScheduler,
-    LMSDiscreteScheduler,
-    PNDMScheduler,
-)
+from diffusers.schedulers import (DDIMScheduler, DPMSolverMultistepScheduler,
+                                  EulerAncestralDiscreteScheduler,
+                                  EulerDiscreteScheduler, LMSDiscreteScheduler,
+                                  PNDMScheduler)
 from diffusers.utils import BaseOutput, is_accelerate_available
 from diffusers.utils.torch_utils import randn_tensor
 from einops import rearrange
 from tqdm import tqdm
 from transformers import CLIPImageProcessor
+
 from src.models_attention.mutual_self_attention import ReferenceAttentionControl
+from src.pipelines.context import get_context_scheduler, shift
+import random
+from src.pipelines.utils import blend_with_keyframe, create_attention_mask
+from torchvision import transforms as T
+import imageio
+import os
 
 
 
@@ -36,15 +40,12 @@ def retrieve_latents(
         raise AttributeError("Could not access latents of provided encoder_output")
 
 
-
-
-
 @dataclass
-class TryOnPipelineOutput(BaseOutput):
-    images: Union[torch.Tensor, np.ndarray]
+class TryOnVideoPipelineOutput(BaseOutput):
+    videos: Union[torch.Tensor, np.ndarray]
+    overlapped_frame_ids: Union[torch.Tensor, np.ndarray]
 
-
-class TryOnPipeline(DiffusionPipeline):
+class TryOnVideoPipeline(DiffusionPipeline):
     _optional_components = []
 
     def __init__(
@@ -80,8 +81,9 @@ class TryOnPipeline(DiffusionPipeline):
         )
         self.cond_image_processor = VaeImageProcessor(
             vae_scale_factor=self.vae_scale_factor,
-            do_convert_rgb=True
+            do_convert_rgb=True,
         )
+        self.enable_vae_slicing()
 
     def _encode_vae_image(self, image: torch.Tensor, generator: torch.Generator):
         if isinstance(generator, list):
@@ -129,14 +131,6 @@ class TryOnPipeline(DiffusionPipeline):
         return self.device
 
     def decode_latents(self, latents):
-        """ Decode latents into image(s).
-        
-        Args:
-            latents (torch.Tensor): Latent tensor of shape (b, c, f, h, w).
-
-        Returns:
-            torch.Tensor: Image(s) tensor of shape (b, 3, f, H, W).
-        """
         video_length = latents.shape[2]
         latents = 1 / 0.18215 * latents
         latents = rearrange(latents, "b c f h w -> (b f) c h w")
@@ -179,6 +173,7 @@ class TryOnPipeline(DiffusionPipeline):
         num_channels_latents,
         width,
         height,
+        video_length,
         dtype,
         device,
         generator,
@@ -187,6 +182,7 @@ class TryOnPipeline(DiffusionPipeline):
         shape = (
             batch_size,
             num_channels_latents,
+            video_length,
             height // self.vae_scale_factor,
             width // self.vae_scale_factor,
         ) # (b, c, f, h, w)
@@ -200,24 +196,25 @@ class TryOnPipeline(DiffusionPipeline):
             latents = randn_tensor(
                 shape, generator=generator, device=device, dtype=dtype
             )
+            # latents = latents.repeat(1, 1, video_length, 1, 1)
         else:
-            print(":>")
             latents = latents.to(device)
 
         # scale the initial noise by the standard deviation required by the scheduler
         latents = latents * self.scheduler.init_noise_sigma
-        
+
         # get image latents
         if isinstance(images, PIL.Image.Image):
             images = [images]
         images = np.concatenate([np.array(i.convert("RGB"))[None, :] for i in images], axis=0)
-        images = images.transpose(0, 3, 1, 2) # b, c, h, w
+        images = images.transpose(0, 3, 1, 2) # f, c, h, w
         images = torch.from_numpy(images).to(dtype=torch.float32) / 127.5 - 1.0
         images = images.to(device=device, dtype=dtype)
-        image_latents = self._encode_vae_image(image=images, generator=generator) # b, c, h', w'
-        image_latents = image_latents.unsqueeze(2) # b, c, f, h', w'
+        image_latents = self._encode_vae_image(image=images, generator=generator) # f, c, h', w'
+        image_latents = rearrange(image_latents, "f c h w -> 1 c f h w", f = video_length)
         return latents, image_latents
-    
+
+
     def prepare_condition(
         self,
         cond_image,
@@ -237,8 +234,6 @@ class TryOnPipeline(DiffusionPipeline):
             image = torch.cat([image] * 2)
 
         return image
-
-
 
     def prepare_mask_and_masked_image(self, masked_images, masks):
         """
@@ -303,7 +298,7 @@ class TryOnPipeline(DiffusionPipeline):
                 raise ValueError("Mask should be in [0, 1] range")
 
             # # paint-by-example inverses the mask
-            # masks = 1 - masks
+            # mask = 1 - mask
 
             # Binarize mask
             masks[masks < 0.5] = 0
@@ -329,7 +324,7 @@ class TryOnPipeline(DiffusionPipeline):
             masks = masks.astype(np.float32) / 255.0
 
             # # paint-by-example inverses the mask
-            # masks = 1 - masks
+            # mask = 1 - mask
 
             masks[masks < 0.5] = 0
             masks[masks >= 0.5] = 1
@@ -344,12 +339,14 @@ class TryOnPipeline(DiffusionPipeline):
         # resize the mask to latents shape as we concatenate the mask to the latents
         # we do that before converting to dtype to avoid breaking in case we're using cpu_offload
         # and half precision
-        # mask: (b, 1, f, h, w), masked_image: (b, 3, f, h, w)
+        # mask: (b, 1, f, h, w), masked_image: (b, 3, f, h, w)\
+        video_length = mask.shape[2]
         mask = rearrange(mask, "b c f h w -> (b f) c h w")
+        
         mask = torch.nn.functional.interpolate(
             mask, size=(height // self.vae_scale_factor, width // self.vae_scale_factor)
         ) # resize mask to (b * f, 1, h_latent, w_latent)
-        mask = rearrange(mask, "(b f) c h w -> b c f h w", f=1) # (b, 1, f, h_latent, w_latent)
+        mask = rearrange(mask, "(b f) c h w -> b c f h w", f=video_length) # (b, 1, f, h_latent, w_latent)
         mask = mask.to(device=device, dtype=dtype)
 
         masked_image = masked_image.to(device=device, dtype=dtype)
@@ -359,7 +356,7 @@ class TryOnPipeline(DiffusionPipeline):
         else:
             masked_image = rearrange(masked_image, "b c f h w -> (b f) c h w")
             masked_image_latents = self._encode_vae_image(masked_image, generator=generator)
-            masked_image_latents = rearrange(masked_image_latents, "(b f) c h w -> b c f h w", f=1)
+            masked_image_latents = rearrange(masked_image_latents, "(b f) c h w -> b c f h w", f=video_length)
 
         # duplicate mask and masked_image_latents for each generation per prompt, using mps friendly method
         if mask.shape[0] < batch_size:
@@ -389,16 +386,18 @@ class TryOnPipeline(DiffusionPipeline):
         return mask, masked_image_latents
 
 
+    
     @torch.no_grad()
     def __call__(
         self,
         ref_cloth_image,
-        image,
-        masked_image,
-        mask,
-        pose_image,
+        images,
+        masked_images,
+        masks,
+        pose_images,
         width,
         height,
+        video_length,
         num_inference_steps,
         guidance_scale,
         num_images_per_prompt=1,
@@ -408,6 +407,15 @@ class TryOnPipeline(DiffusionPipeline):
         return_dict: bool = True,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         callback_steps: Optional[int] = 1,
+        context_schedule="uniform",
+        context_frames=24,
+        context_stride=1,
+        context_overlap=4,
+        context_batch_size=1,
+        cache_branch: Optional[int] = 0,
+        drop_interval=2,
+        random_shift=False,
+        attn_type="full",
         **kwargs,
     ):
         # Default height and width to unet
@@ -422,21 +430,21 @@ class TryOnPipeline(DiffusionPipeline):
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         timesteps = self.scheduler.timesteps
 
-        batch_size = len(ref_cloth_image) if isinstance(ref_cloth_image, list) else 1
-        
+        batch_size = 1
+
         # Prepare clip image embeds
         clip_image = self.clip_image_processor.preprocess(
-            [ref.resize((224, 224)) for ref in ref_cloth_image] if isinstance(ref_cloth_image, list) else ref_cloth_image.resize((224, 224)), return_tensors="pt"
+            ref_cloth_image, return_tensors="pt"
         ).pixel_values
         clip_image_embeds = self.image_encoder(
             clip_image.to(device, dtype=self.image_encoder.dtype)
         ).image_embeds
-        image_prompt_embeds = clip_image_embeds.unsqueeze(1)
-        uncond_image_prompt_embeds = torch.zeros_like(image_prompt_embeds)
+        encoder_hidden_states = clip_image_embeds.unsqueeze(1)
+        uncond_encoder_hidden_states = torch.zeros_like(encoder_hidden_states)
 
         if do_classifier_free_guidance:
-            image_prompt_embeds = torch.cat(
-                [uncond_image_prompt_embeds, image_prompt_embeds], dim=0
+            encoder_hidden_states = torch.cat(
+                [uncond_encoder_hidden_states, encoder_hidden_states], dim=0
             )
         reference_control_writer = ReferenceAttentionControl(
             self.reference_unet,
@@ -455,27 +463,26 @@ class TryOnPipeline(DiffusionPipeline):
 
         num_channels_latents = self.vae.config.latent_channels
         latents, image_latents = self.prepare_latents(
-            image,
+            images,         # list of source images pil
             batch_size * num_images_per_prompt,
             num_channels_latents,
             width,
             height,
+            video_length,
             clip_image_embeds.dtype,
             device,
             generator,
-            latents=kwargs.get('latents')
-        )
-        latents = latents.unsqueeze(2)  # (bs, c, 1, h', w')
+        ) # (bs, c, f, h_latent, w_latent)
         noise = latents
-        latents_dtype = latents.dtype
-
         # preprocess mask and image
-        masks, masked_images = self.prepare_mask_and_masked_image(masked_image, mask) # (b, c, h, w)
-        # expand temporal dim
-        masks = masks.unsqueeze(2) # (bs, c, 1, h', w')
-        masked_images = masked_images.unsqueeze(2) # (bs, c, 1, h', w')
+        # given that masked images and masks are processed
+        masks, masked_images = self.prepare_mask_and_masked_image(masked_images, masks) # (f, c, h, w)
+
+        # expand batch dim
+        masks = rearrange(masks, "f c h w -> 1 c f h w")
+        masked_images = rearrange(masked_images, "f c h w -> 1 c f h w")
         # prepare mask latents
-        mask, masked_image_latents = self.prepare_mask_latents(
+        masks, masked_image_latents = self.prepare_mask_latents(
             masks,
             masked_images,
             batch_size * num_images_per_prompt,
@@ -485,7 +492,7 @@ class TryOnPipeline(DiffusionPipeline):
             device=device,
             generator=generator,
             do_classifier_free_guidance=do_classifier_free_guidance,
-        ) # (bs, c, 1, h', w')
+        ) # (bs, c, f, h', w')
 
         # Prepare extra step kwargs.
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
@@ -500,12 +507,19 @@ class TryOnPipeline(DiffusionPipeline):
         ref_cloth_image_latents = self.vae.encode(ref_cloth_image_tensor).latent_dist.mean
         ref_cloth_image_latents = ref_cloth_image_latents * 0.18215  # (b, 4, h, w)
 
-
-        # Prepare pose condition image
-        pose_cond_tensor = self.cond_image_processor.preprocess(
-            pose_image, height=height, width=width
-        )
-        pose_cond_tensor = pose_cond_tensor.unsqueeze(2)  # (bs, c, 1, h, w)
+        # Prepare a list of pose condition images
+        pose_cond_tensor_list = []
+        for pose_image in pose_images:
+            pose_cond_tensor = self.cond_image_processor.preprocess(
+                pose_image, height=height, width=width
+             )[0] # c, h, w
+            pose_cond_tensor = pose_cond_tensor.unsqueeze(1) # c, 1, h, w
+            pose_cond_tensor = pose_cond_tensor.to(
+                device=device, dtype=self.pose_guider.dtype
+            )
+            pose_cond_tensor_list.append(pose_cond_tensor)
+        pose_cond_tensor = torch.cat(pose_cond_tensor_list, dim=1)  # (c, t, h, w)
+        pose_cond_tensor = pose_cond_tensor.unsqueeze(0)
         pose_cond_tensor = pose_cond_tensor.to(
             device=device, dtype=self.pose_guider.dtype
         )
@@ -513,11 +527,45 @@ class TryOnPipeline(DiffusionPipeline):
         pose_fea = (
             torch.cat([pose_fea] * 2) if do_classifier_free_guidance else pose_fea
         )
-
-        # denoising loop
+        context_scheduler = get_context_scheduler(context_schedule)
+        context_queue = list(
+            context_scheduler(
+                0,
+                num_inference_steps,
+                latents.shape[2],
+                context_frames,
+                context_stride,
+                context_overlap,
+            )
+        )
+        num_context_batches = math.ceil(len(context_queue) / context_batch_size)
+        init_global_context = []
+        for ctx_batch in range(num_context_batches):
+            init_global_context.append(
+                context_queue[
+                    ctx_batch * context_batch_size : (ctx_batch + 1) * context_batch_size
+                ]
+            )
+        
+        cache_features = torch.empty_like(pose_fea)
+        cache_timesteps = torch.stack([timesteps[0]]*latents.shape[2], dim=0)
+        caching_scheduler = np.zeros((num_inference_steps, latents.shape[2]))
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
+                noise_pred = torch.zeros(
+                    (
+                        latents.shape[0] * (2 if do_classifier_free_guidance else 1),
+                        *latents.shape[1:],
+                    ),
+                    device=latents.device,
+                    dtype=latents.dtype,
+                )
+                counter = torch.zeros(
+                    (1, 1, latents.shape[2], 1, 1),
+                    device=latents.device,
+                    dtype=latents.dtype,
+                )
                 # 1. Forward reference image
                 if i == 0:
                     self.reference_unet(
@@ -526,56 +574,107 @@ class TryOnPipeline(DiffusionPipeline):
                         ),
                         torch.zeros_like(t),
                         # t,
-                        encoder_hidden_states=image_prompt_embeds,
+                        encoder_hidden_states=encoder_hidden_states,
                         return_dict=False,
                     )
-                    # 2. Update reference unet feature into denosing net
                     reference_control_reader.update(reference_control_writer)
 
-                # 3.1 expand the latents if we are doing classifier free guidance
-                latent_model_input = (
-                    torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                )
-                latent_model_input = self.scheduler.scale_model_input(
-                    latent_model_input, t
-                )
-                # concat mask and masked_image_latents to the latents
-                latent_model_input = torch.cat([latent_model_input, mask, masked_image_latents], dim=1)
+                # choose a shift size at each timestep t
+                stride = 5 # 0, 8, 16, 0, 8, 16, ...
+                pattern = [step * stride for step in range(context_frames//stride + 2)]
+                shift_val = pattern[i % len(pattern)]
+                if random_shift:
+                    shift_val = random.randint(0, video_length-1)
+
+
+                global_context = shift(init_global_context, shift_val=shift_val, context_size=context_frames, num_frames=latents.shape[2])
                 
-                noise_pred = self.denoising_unet(
-                    latent_model_input,
-                    t,
-                    encoder_hidden_states=image_prompt_embeds,
-                    pose_cond_fea=pose_fea,
-                    return_dict=False,
-                )[0]
+                for context_idx, context in enumerate(global_context):
+                    drop = context_idx % drop_interval
+                    if i == 0 and i == len(timesteps) - 1: # full compute
+                        # full compute at first and last timestep
+                        cache_feat = None
+                        attention_mask = None
+                        for j, c in enumerate(context):
+                            cache_timesteps[c] = t
+                            caching_scheduler[i, c] = 1
+                    else:
+                        if drop != 0: # partial compute
+                            cache_feat = (
+                                torch.cat([cache_features[:, :, c] for c in context])
+                                .to(device)
+                            )
+                            prev_cache_features = (
+                                torch.cat([cache_features[:, :, [c[0] - video_length]] for c in context])
+                                .to(device)
+                            )
+
+                            # approximate the blended cached features
+                            if drop == 1:
+                                cache_feat = blend_with_keyframe(prev_cache_features, cache_feat, initial_weight=0.5)
+
+                            cache_timestep = (
+                                torch.cat([cache_timesteps[c] for c in context])
+                                .to(device)
+                            )
+                            # create attention_mask 
+                            attention_mask = create_attention_mask(cache_timestep)
+                        else: # full compute
+                            cache_feat = None
+                            attention_mask = None
+                            for j, c in enumerate(context):
+                                cache_timesteps[c] = t
+                                caching_scheduler[i, c] = 1
+                    
+                    # 3.1 expand the latents if we are doing classifier free guidance
+                    latent_model_input = (
+                        torch.cat([latents[:, :, c] for c in context])
+                        .to(device)
+                        .repeat(2 if do_classifier_free_guidance else 1, 1, 1, 1, 1)
+                    )
+                    latent_model_input = self.scheduler.scale_model_input(
+                        latent_model_input, t
+                    )
+                    masked_image_latents_input = torch.cat([masked_image_latents[:, :, c] for c in context])
+                    masks_input = torch.cat([masks[:, :, c] for c in context])
+                    # concat mask and masked_image_latents to the latents
+                    latent_model_input = torch.cat([latent_model_input, masks_input, masked_image_latents_input], dim=1)
+                    latent_pose_input = torch.cat(
+                        [pose_fea[:, :, c] for c in context]
+                    )
+                    # use cached latents_timestep 
+                    pred, cache_feat = self.denoising_unet(
+                        latent_model_input,
+                        t,
+                        encoder_hidden_states=encoder_hidden_states,
+                        pose_cond_fea=latent_pose_input,
+                        cache_features=cache_feat,
+                        cache_branch=cache_branch,
+                        return_dict=False,
+                        attention_mask_cached=attention_mask,
+                        attn_type=attn_type,
+                        skip_unet=False,
+                        **kwargs
+                    )
+                    
+                    for j, c in enumerate(context):
+                        noise_pred[:, :, c] = noise_pred[:, :, c] + pred
+                        counter[:, :, c] = counter[:, :, c] + 1
+                        cache_features[:, :, c] = cache_feat
+                        
 
                 # perform guidance
                 if do_classifier_free_guidance:
-                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                    noise_pred_uncond, noise_pred_text = (noise_pred / counter).chunk(2)
                     noise_pred = noise_pred_uncond + guidance_scale * (
                         noise_pred_text - noise_pred_uncond
                     )
-
+                overlapped_frame_ids = (counter == 2).squeeze()
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(
                     noise_pred, t, latents, **extra_step_kwargs, return_dict=False
                 )[0]
-
-                # blend
-                init_latents_proper = image_latents
-                if do_classifier_free_guidance:
-                    init_mask, _ = mask.chunk(2)
-                else:
-                    init_mask = mask
-
-                if i < len(timesteps) - 1:
-                    noise_timestep = timesteps[i + 1]
-                    init_latents_proper = self.scheduler.add_noise(
-                        init_latents_proper, noise, torch.tensor([noise_timestep])
-                    )
-                latents = (1 - init_mask) * init_latents_proper + init_mask * latents
-
+                
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or (
                     (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
@@ -587,15 +686,14 @@ class TryOnPipeline(DiffusionPipeline):
 
             reference_control_reader.clear()
             reference_control_writer.clear()
-
         # Post-processing
-        images = self.decode_latents(latents)  # (b, c, f, h, w)
-
+        video = self.decode_latents(latents)  # (b, c, f, h, w)
+        
         # Convert to tensor
         if output_type == "tensor":
-            images = torch.from_numpy(images)
+            video = torch.from_numpy(video)
 
         if not return_dict:
-            return images
+            return video, overlapped_frame_ids
 
-        return TryOnPipelineOutput(images=images)
+        return TryOnVideoPipelineOutput(videos=video, overlapped_frame_ids=overlapped_frame_ids)

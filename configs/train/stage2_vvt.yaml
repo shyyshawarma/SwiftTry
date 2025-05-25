@@ -2,16 +2,16 @@ data:
   train_bs: 1
   train_width: 384
   train_height: 512
-  meta_paths: "/root/dataset/TikTokDress"
-  sample_rate: 4
+  meta_paths: "/root/dataset/VVT"
+  sample_rate: 4 
   n_sample_frames: 16
 
 solver:
   gradient_accumulation_steps: 1
-  mixed_precision: 'fp16'
+  mixed_precision: 'bf16'
   enable_xformers_memory_efficient_attention: true 
   gradient_checkpointing: false 
-  max_train_steps: 150000
+  max_train_steps: 100000
   max_grad_norm: 1.0
   # lr
   learning_rate: 1.0e-5
@@ -28,7 +28,7 @@ solver:
 
 # val:
 #   validation_steps: 5000
-tracker_name: swifttry_SAM2mask_TikTokDress
+tracker_name: swifttry_vvt
 
 noise_scheduler_kwargs:
   num_train_timesteps: 1000
@@ -55,5 +55,5 @@ stage1_ckpt_step: 200000
 seed: 10000
 resume_from_checkpoint: ''
 checkpointing_steps: 10000
-exp_name: 'stage2_512_TikTokDressFinal_from_stage1_1024x768_ft_upblocks_aug_SAM2mask'
+exp_name: 'stage2_vvt512_from_stage1_1024x768_ft_upblocks_aug(oot_mask)'
 output_dir: './exp_output' 

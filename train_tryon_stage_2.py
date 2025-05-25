@@ -37,13 +37,13 @@ from transformers import CLIPVisionModelWithProjection
 from torch.utils.data import ConcatDataset
 
 from src.data.dataset import VVTDataset, TikTokDressDataset
-from src.models.mutual_self_attention import ReferenceAttentionControl
-from src.models.pose_guider import PoseGuider
-from src.models.unet_2d_condition import UNet2DConditionModel
-from src.models.unet_3d import UNet3DConditionModel
-from src.pipelines.pipeline_tryon_video_random_shiftcache_half import TryOnVideoPipeline
+from src.models_attention.mutual_self_attention import ReferenceAttentionControl
+from src.models_attention.pose_guider import PoseGuider
+from src.models_attention.unet_2d_condition import UNet2DConditionModel
+from src.models_attention.unet_3d import UNet3DConditionModel
+from src.pipelines.pipeline_swift_try import TryOnVideoPipeline
 from src.utils.calculate_ssim_lpips import compute_ssim_l1_psnr, compute_lpips
-# from src.utils.scheduler import VideoDDIMScheduler, sample_timestep
+
 from src.utils.util import (
     delete_additional_ckpt,
     import_filename,
@@ -52,7 +52,7 @@ from src.utils.util import (
     save_videos_from_pil,
     seed_everything,
 )
-from utils import add_caption_to_video, add_caption_to_frames, decode_latents, pred_original_video
+from utils import add_caption_to_video
 
 
 warnings.filterwarnings("ignore")

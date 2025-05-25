@@ -93,6 +93,7 @@ class MyAttnProcessor2_0:
         elif kwargs.get("attn_type") == "full":
             attention_mask = None
         
+        
         hidden_states = F.scaled_dot_product_attention(
             query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=is_causal
         )

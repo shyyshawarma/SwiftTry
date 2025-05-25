@@ -15,9 +15,9 @@ from PIL import Image
 from torchvision import transforms
 from transformers import CLIPVisionModelWithProjection
 
-from src.models.pose_guider import PoseGuider
-from src.models.unet_2d_condition import UNet2DConditionModel
-from src.models.unet_3d import UNet3DConditionModel
+from src.models_attention.pose_guider import PoseGuider
+from src.models_attention.unet_2d_condition import UNet2DConditionModel
+from src.models_attention.unet_3d import UNet3DConditionModel
 from src.pipelines.pipeline_tryon import TryOnPipeline
 from src.utils.util import save_videos_from_pil
 
@@ -99,9 +99,7 @@ class TryOnController:
             pose_guider.load_state_dict(
                 torch.load(self.config.pose_guider_path, map_location="cpu"),
             )
-            # # perflow
-            # delta_weights = UNet2DConditionModel.from_pretrained("hansyan/perflow-sd15-delta-weights", torch_dtype=torch.float16, variant="v0-1",).state_dict()
-
+            
             pipe = TryOnPipeline(
                 vae=vae,
                 image_encoder=image_enc,

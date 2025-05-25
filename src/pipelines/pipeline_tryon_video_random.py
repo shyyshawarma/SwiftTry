@@ -17,7 +17,7 @@ from einops import rearrange
 from tqdm import tqdm
 from transformers import CLIPImageProcessor
 
-from src.models.mutual_self_attention import ReferenceAttentionControl
+from src.models_attention.mutual_self_attention import ReferenceAttentionControl
 from src.pipelines.context import get_context_scheduler
 
 

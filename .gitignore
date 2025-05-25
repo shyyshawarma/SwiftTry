@@ -9,12 +9,11 @@ logs/
 .venv/
 mlruns/
 data/
-_output_result/
 *.jpg
 *.png
-*.mp4
 *.pth
 *.pt
+*.pth
 *.pkl
 *.bin
 *.sqsh

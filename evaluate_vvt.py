@@ -3,6 +3,7 @@ import argparse
 import random
 from datetime import datetime
 from os.path import join
+import gradio as gr
 import numpy as np
 from tqdm import tqdm
 import torch
@@ -20,7 +21,7 @@ from src.models_attention.unet_2d_condition import UNet2DConditionModel
 from src.models_attention.unet_3d import UNet3DConditionModel
 from src.pipelines.pipeline_swift_try import TryOnVideoPipeline
 from src.utils.util import read_frames, save_videos_grid, convert_videos_to_pil
-   
+
 
 def repaint(person, mask, result):
     _, h = result.size
@@ -42,6 +43,7 @@ def repaint_video(video, mask_video, result_video):
         repaint_result_video.append(transforms.ToTensor()(repaint(image, mask, result)))
 
     return repaint_result_video
+
 
 
 class TryOnController:
@@ -121,7 +123,6 @@ class TryOnController:
             pose_guider.load_state_dict(
                 torch.load(self.config.pose_guider_path, map_location="cpu"),
             )
-
             pipe = TryOnVideoPipeline(
                 vae=vae,
                 image_encoder=image_enc,
@@ -141,7 +142,6 @@ class TryOnController:
         pose_list = [pose_image_pil.resize((width, height)) for pose_image_pil in read_frames(pose_video_path)]
         
         clip_length = clip_length if clip_length < len(masked_image_list) else len(masked_image_list)
-        
         video = self.pipeline(
             ref_cloth_image,
             image_list[:clip_length],
@@ -193,7 +193,7 @@ class TryOnController:
         out_dir = os.path.join(save_dir, 'result')
         video_full_out_path = os.path.join(video_full_out_dir, f"{video_name}-{cloth_name}.mp4")
         out_path = os.path.join(out_dir, f"{video_name}-{cloth_name}.mp4")
-        
+                
         save_videos_grid(video_full, video_full_out_path, n_rows=3)
         save_videos_grid(video, out_path, n_rows=1)
         torch.cuda.empty_cache()
@@ -205,9 +205,9 @@ class TryOnController:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="./configs/prompts/tryon_video_tiktok.yaml")
-    parser.add_argument("--data_dir", type=str, default="/root/dataset/TikTokDress")
-    parser.add_argument("--test_pairs", type=str, default="/root/dataset/TikTokDress/test_unpaired_new_webpage.txt")
+    parser.add_argument("--config", type=str, default="./configs/prompts/tryon_video.yaml")
+    parser.add_argument("--data_dir", type=str, default="/root/dataset/VVT_video")
+    parser.add_argument("--test_pairs", type=str, default="/root/dataset/VVT_video/test_pairs_unpaired.txt")
     parser.add_argument("--save_dir", type=str, default="./output_result/")
     parser.add_argument("--overlap_value", type=int, default=0)
     args = parser.parse_args()
@@ -219,19 +219,19 @@ if __name__ == '__main__':
     test_pairs = test_pairs.split('\n')
     test_pairs = [pair.split() for pair in test_pairs if pair]
     for video_id, cloth_id in tqdm(test_pairs):
-        cloth_path = join(args.data_dir, "garments_webpage", cloth_id)
+        cloth_path = glob.glob(join(args.data_dir, "lip_clothes_person", cloth_id, '*.jpg'))[0]
         cloth_name = os.path.basename(cloth_path)
-        if os.path.exists(os.path.join(save_dir, 'canvas', f"{video_id}-{cloth_name}.mp4")):
+        if os.path.exists(os.path.join(save_dir, 'canvas', f"{video_id}.mp4-{cloth_name}.mp4")):
             print(f"{video_id}-{cloth_id}.jpg.mp4 already processed...")
             continue
         controller.tryon_video(
             ref_cloth_image=cloth_path,
-            video_path=join(args.data_dir, "videos_all_normalized", f"{video_id}"),
-            masked_video_path=join(args.data_dir, "videos_all_normalized_masked_newest", f"{video_id}"), # videos_all_normalized_masked
-            mask_video_path=join(args.data_dir, "videos_all_normalized_mask_newest", f"{video_id}"), # videos_all_normalized_mask
-            pose_video_path=join(args.data_dir, "videos_all_normalized_dwpose", f"{video_id}"), # videos_all_normalized_dwpose
+            video_path=join(args.data_dir, "test_frames", f"{video_id}.mp4"),
+            masked_video_path=join(args.data_dir, "test_frames_agnostic", f"{video_id}.mp4"), # videos_all_normalized_masked
+            mask_video_path=join(args.data_dir, "test_frames_agnostic_mask", f"{video_id}.mp4"), # videos_all_normalized_mask
+            pose_video_path=join(args.data_dir, "test_frames_dwpose_new", f"{video_id}.mp4"), # videos_all_normalized_dwpose
             clip_length=10000,
-            repaint=True,
+            repaint=False,
             save_dir=save_dir,
             overlap_value=args.overlap_value
         )

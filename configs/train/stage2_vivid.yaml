@@ -28,7 +28,7 @@ solver:
 
 # val:
 #   validation_steps: 5000
-tracker_name: movingtryon_video_vivid512_ootmask
+tracker_name: swifttry_vivid512_ootmask
 
 noise_scheduler_kwargs:
   num_train_timesteps: 1000

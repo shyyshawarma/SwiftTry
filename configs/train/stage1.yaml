@@ -25,7 +25,7 @@ solver:
   adam_epsilon: 1.0e-8
 
 vgg_weight_loss: 1.0e-4
-tracker_name: movingtryon_perceptual
+tracker_name: swifttry_pretrained_image
 use_vgg_perceptual_loss: true
 noise_scheduler_kwargs:
   num_train_timesteps: 1000
@@ -52,5 +52,5 @@ seed: 10000
 resume_from_checkpoint: 'latest'
 checkpointing_steps: 10000
 save_model_epoch_interval: 5
-exp_name: 'stage1_1024x768_ft_upblocks_perceptual'
+exp_name: 'stage1_1024x768_ft_upblocks_aug'
 output_dir: './exp_output'

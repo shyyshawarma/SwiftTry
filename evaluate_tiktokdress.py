@@ -22,6 +22,7 @@ from src.pipelines.pipeline_swift_try import TryOnVideoPipeline
 from src.utils.util import read_frames, save_videos_grid, convert_videos_to_pil
    
 
+
 def repaint(person, mask, result):
     _, h = result.size
     kernal_size = h // 50
@@ -42,6 +43,7 @@ def repaint_video(video, mask_video, result_video):
         repaint_result_video.append(transforms.ToTensor()(repaint(image, mask, result)))
 
     return repaint_result_video
+
 
 
 class TryOnController:

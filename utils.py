@@ -72,33 +72,3 @@ def decode_latents(vae, latents):
     video = video.cpu().float().numpy()
     return video
 
-
-def pred_original_video(
-    scheduler,
-    model_output: torch.FloatTensor,
-    timesteps: int,
-    sample: torch.FloatTensor,
-):  
-    # Make sure alphas_cumprod and timestep have same device and dtype as original_samples
-    alphas_cumprod = scheduler.alphas_cumprod.to(device=sample.device, dtype=sample.dtype)
-    timesteps = timesteps.to(sample.device)
-
-    # 1. compute alphas, betas
-    alpha_prod_t = alphas_cumprod[timesteps]
-    # while len(alpha_prod_t.shape) < len(sample.shape):
-    #     alpha_prod_t = alpha_prod_t.unsqueeze(-1)
-
-    beta_prod_t = 1 - alpha_prod_t
-
-    alpha_prod_t = alpha_prod_t.squeeze()[None, None, :, None, None]
-    beta_prod_t = beta_prod_t.squeeze()[None, None, :, None, None]
-
-    # 2. compute predicted original sample from predicted noise also called
-    # "predicted x_0" of formula (15) from https://arxiv.org/pdf/2006.11239.pdf
-    # pred_original_sample = (sample - beta_prod_t ** (0.5) * model_output) / alpha_prod_t ** (0.5)
-    pred_original_sample = (alpha_prod_t**0.5) * sample - (beta_prod_t**0.5) * model_output
-    # 3. Clip or threshold "predicted x_0"
-    pred_original_sample = scheduler._threshold_sample(pred_original_sample)
-    
-
-    return pred_original_sample
