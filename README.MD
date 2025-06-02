@@ -64,7 +64,7 @@ Please CITE [our paper](https://arxiv.org/abs/2412.10178) whenever this reposito
   - `configs`: configs for training/inferencing
 - We also provide the checkpoint at this <a href="https://huggingface.co/NMHung/SwiftTry"><img src="https://img.shields.io/badge/🤗_HuggingFace-Model-ffbd45.svg" alt="HuggingFace"></a>.
 <!-- - NOTE: While our codebase uses the 3-Clause BSD License, our model is derived from SD-Turbo and therefore must comply with SD-Turbo's [original license](https://huggingface.co/webml/models/blob/5085cddea6b3138215675660ec708f215cb28dd4/sd-turbo/LICENSE.txt) -->
-
+Training
 ## Installation
 ### Environment
 - First create a torch-cuda available environment:
@@ -139,7 +139,16 @@ Finally, these weights should be orgnized as follows:
 
 ### Evaluate
 **TODO**
+## TikTokDress Dataset
+To download the TikTokDress Dataset, please follow the instructions in this 🤗 [Huggingface Datasets](https://huggingface.co/datasets/nguyenquivinhquang/TikTokDress)
 
+> ***By downloading these datasets, USER agrees:***
+> 
+> * to use these datasets for research or educational purposes only
+> * to not distribute the datasets or part of the datasets in any original or modified form.
+> * and to [cite our paper](#cpm-color-pattern-makeup-transfer) whenever these datasets are employed to help produce published results.
+
+---
 ## Training
 
 Note: package dependencies have been updated, you may upgrade your environment via `pip install -r requirements.txt` before training.
