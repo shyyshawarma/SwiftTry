@@ -31,6 +31,7 @@
     <a href="https://arxiv.org/abs/2412.10178"><img alt='arXiv' src="https://img.shields.io/badge/arXiv-2412.10178-b31b1b.svg"></a>
     <a href="https://swift-try.github.io/"><img alt='page' src="https://img.shields.io/badge/Project-Website-pink"></a>
     <a href="https://huggingface.co/NMHung/SwiftTry"><img src="https://img.shields.io/badge/🤗_HuggingFace-Model-ffbd45.svg" alt="HuggingFace"></a>
+    <a href="https://huggingface.co/datasets/nguyenquivinhquang/TikTokDress"><img src="https://img.shields.io/badge/🤗_HuggingFace-Dataset-ffbd45.svg" alt="HuggingFace"></a>
   </p>
   <br>
 </p>
