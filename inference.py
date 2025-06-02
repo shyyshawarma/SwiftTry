@@ -219,17 +219,17 @@ if __name__ == '__main__':
     test_pairs = test_pairs.split('\n')
     test_pairs = [pair.split() for pair in test_pairs if pair]
     for video_id, cloth_id in tqdm(test_pairs):
-        cloth_path = join(args.data_dir, "garments_webpage", cloth_id)
+        cloth_path = join(args.data_dir, "garments", cloth_id)
         cloth_name = os.path.basename(cloth_path)
         if os.path.exists(os.path.join(save_dir, 'canvas', f"{video_id}-{cloth_name}.mp4")):
             print(f"{video_id}-{cloth_id}.jpg.mp4 already processed...")
             continue
         controller.tryon_video(
             ref_cloth_image=cloth_path,
-            video_path=join(args.data_dir, "videos_all_normalized", f"{video_id}"),
-            masked_video_path=join(args.data_dir, "videos_all_normalized_masked_newest", f"{video_id}"), # videos_all_normalized_masked
-            mask_video_path=join(args.data_dir, "videos_all_normalized_mask_newest", f"{video_id}"), # videos_all_normalized_mask
-            pose_video_path=join(args.data_dir, "videos_all_normalized_dwpose", f"{video_id}"), # videos_all_normalized_dwpose
+            video_path=join(args.data_dir, "videos", f"{video_id}"),
+            masked_video_path=join(args.data_dir, "videos_masked", f"{video_id}"), # videos_all_normalized_masked
+            mask_video_path=join(args.data_dir, "videos_mask", f"{video_id}"), # videos_all_normalized_mask
+            pose_video_path=join(args.data_dir, "videos_dwpose", f"{video_id}"), # videos_all_normalized_dwpose
             clip_length=10000,
             repaint=True,
             save_dir=save_dir,

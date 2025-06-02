@@ -133,12 +133,43 @@ Finally, these weights should be orgnized as follows:
 1. Infer a normal prompt or a txt file of prompts by using `inference.py`
 
 ```bash
-    python inference.py <prompt> <ckpt_path>
+    python inference.py --data_dir <DATA_PATH> --test_pairs <TEST_PAIRS_PATH> --save_dir <SAVE_DIR>
 ```
-**TODO**
+The <DATA_DIR> should be in the following structure:
+```text
+DATA_DIR/
+|-- videos
+|   |-- 00001.mp4
+|   |-- 00002.mp4
+|-- videos_masked
+|   |-- 00001.mp4
+|   |-- 00002.mp4
+|-- videos_mask
+|   |-- 00001.mp4
+|   |-- 00002.mp4
+|-- videos_dwpose
+|   |-- 00001.mp4
+|   |-- 00002.mp4
+|-- garments
+|   |-- 00001.png
+|   |-- 00002.png
+```
+the `test_pairs` should be:
+```
+00425.mp4 00425.png
+00426.mp4 00426.png
+...
+```
 
 ### Evaluate
-**TODO**
+Evaluate on TikTokDress dataset
+```bash
+    python evaluate_tiktokdress.py --data_dir <DATA_PATH> --test_pairs <TEST_PAIRS_PATH> --save_dir <SAVE_DIR>
+```
+Evaluate on VVT dataset
+```bash
+    python evaluate_vvt.py --data_dir <DATA_PATH> --test_pairs <TEST_PAIRS_PATH> --save_dir <SAVE_DIR>
+```
 ## TikTokDress Dataset
 To download the TikTokDress Dataset, please follow the instructions in this 🤗 [Huggingface Datasets](https://huggingface.co/datasets/nguyenquivinhquang/TikTokDress)
 
@@ -190,10 +221,12 @@ Run command:
 accelerate launch train_tryon_stage_2.py --config configs/train/stage2_tiktok_sam2mask.yaml
 ```
 
+## Acknowledgments
+We would like to thank the contributors to the [Moore-AnimateAnyone](https://github.com/MooreThreads/Moore-AnimateAnyone) repository, for their open research and exploration.
+
 ## License
-**TODO**
 ```
-Copyright (c) 2024 VinAI
+Copyright (c) 2025 VinAI
 Licensed under the 3-Clause BSD License.
 You may obtain a copy of the License at
     https://opensource.org/license/bsd-3-clause
