@@ -5,6 +5,7 @@
 - [Running](#running)
   - [Inference](#inference)
   - [Evaluate](#evaluate)
+- [TikTokDress Dataset](#TikTokDressDataset)
 - [Training](#training)
 - [License](#license)
 
@@ -170,7 +171,7 @@ Evaluate on VVT dataset
 ```bash
     python evaluate_vvt.py --data_dir <DATA_PATH> --test_pairs <TEST_PAIRS_PATH> --save_dir <SAVE_DIR>
 ```
-## TikTokDress Dataset
+## TikTokDressDataset
 To download the TikTokDress Dataset, please follow the instructions in this 🤗 [Huggingface Datasets](https://huggingface.co/datasets/nguyenquivinhquang/TikTokDress)
 
 > ***By downloading these datasets, USER agrees:***
